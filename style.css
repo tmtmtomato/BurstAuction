@@ -11,7 +11,7 @@ body {
 }
 
 #game-container {
-    display: flex;
+    display: none; /* ★ flex から none に変更 */
     flex-direction: column;
     width: 95%;
     max-width: 800px;
@@ -19,8 +19,8 @@ body {
     border-radius: 10px;
     box-shadow: 0 0 15px rgba(0,0,0,0.1);
     padding: 20px;
-    position: relative; /* ★追加: アニメーションの基準点にする */
-    overflow: hidden;   /* ★追加: コンテナ外にはみ出すアニメーション要素を隠す */
+    position: relative;
+    overflow: hidden;
 }
 
 /* 各エリアの共通スタイル */
@@ -165,7 +165,10 @@ h2 {
     min-height: 25px;
 }
 
-/* もう一度プレイするボタンで使ってる */
+
+/* ============================
+   ボタンのスタイル
+   ============================ */
 button {
     display: block;
     width: 200px;
@@ -196,7 +199,9 @@ button:disabled {
     gap: 10px;
 }
 
-/* 競り対象カードの「コンテナ」のスタイル */
+/* ============================
+   競り対象カードのコンテナのスタイル
+   ============================ */
 #bid-target-card {
     /* カードと同じサイズを確保 */
     width: 45px;
@@ -221,7 +226,9 @@ button:disabled {
 }
 
 
-/* 難易度選択 */
+/* ============================
+   難易度選択のスタイル
+   ============================ */
 #difficulty-selector {
     text-align: center;
     margin-bottom: 15px;
@@ -237,4 +244,86 @@ button:disabled {
     margin: 0 10px;
     cursor: pointer;
 }
-/**難易度選択ここまで**/
+
+
+/* ============================
+   モード選択・部屋画面のスタイル
+   ============================ */
+   .screen {
+    display: none; /* 基本は非表示 */
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 95%;
+    max-width: 600px;
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.1);
+    padding: 30px;
+    text-align: center;
+}
+
+.screen.active {
+    display: flex; /* activeクラスがついたら表示 */
+}
+
+.screen h1 {
+    font-size: 2.5em;
+    margin-bottom: 30px;
+    color: #333;
+}
+
+.screen h2 {
+    font-size: 2em;
+    margin-bottom: 20px;
+}
+
+.menu-container {
+    margin-bottom: 20px;
+}
+
+.menu-container button {
+    width: 250px;
+    margin-bottom: 15px;
+}
+
+.join-room-container {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+#room-id-input {
+    width: 150px;
+    padding: 10px;
+    font-size: 16px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+#room-message {
+    min-height: 24px;
+    font-weight: bold;
+    color: #007bff;
+}
+
+#back-to-mode-selection-button {
+    background-color: #6c757d; /* グレー系の色 */
+    width: 120px;
+    font-size: 14px;
+}
+
+
+
+.room-info {
+    text-align: center;
+    font-weight: bold;
+    color: #007bff;
+    margin-top: 10px;
+    min-height: 20px;
+    display: none; /* 対人戦モード以外では非表示 */
+}
+/* 対人戦モードの時だけ表示する */
+.multi-mode #multiplayer-room-info {
+    display: block;
+}

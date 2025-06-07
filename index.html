@@ -7,8 +7,30 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+     <!-- ★★★ モード選択画面 (新規追加) ★★★ -->
+     <div id="mode-selection-screen" class="screen active">
+        <h1>Burst Auction</h1>
+        <div class="menu-container">
+            <button id="solo-play-button">ひとりで遊ぶ (CPU戦)</button>
+            <button id="multi-play-button">ふたりで遊ぶ (友達対戦)</button>
+        </div>
+    </div>
 
-    <div id="game-container">
+    <!-- ★★★ 対戦部屋画面 (新規追加) ★★★ -->
+    <div id="room-screen" class="screen">
+        <h2>友達と対戦</h2>
+        <div class="menu-container">
+            <button id="create-room-button">部屋をつくる</button>
+            <div class="join-room-container">
+                <input type="text" id="room-id-input" placeholder="部屋の番号を入力">
+                <button id="join-room-button">部屋にはいる</button>
+            </div>
+        </div>
+        <p id="room-message"></p>
+        <button id="back-to-mode-selection-button">もどる</button>
+    </div>
+
+    <div id="game-container" style="display: none;"> 
         <!-- 相手(CPU)エリア -->
         <div id="cpu-area" class="player-area">
             <h2>CPU</h2>
@@ -57,6 +79,9 @@
                 <button id="restart-button" style="display: none;">もう一度プレイする</button>
             </div>
             <p id="message-area">ゲームの準備中...</p>
+            <!-- ★★★ ここに新しい部屋番号表示エリアを追加 ★★★ -->
+            <p id="multiplayer-room-info" class="room-info"></p>
+
         </div>
 
         <!-- あなた(プレイヤー)エリア -->
@@ -79,6 +104,10 @@
             <div id="player-hand" class="card-list hand"></div>
         </div>
     </div>
+    <!-- Firebase App (the core Firebase SDK) is always required and must be listed first -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <!-- Add an SDK for the Firebase product that you want to use -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
     <script src="game.js"></script>
 </body>
