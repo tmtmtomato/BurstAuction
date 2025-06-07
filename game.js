@@ -332,24 +332,34 @@ function calculateScore(cards) {
 // 5. ゲーム進行のロジック
 // ===============================================
 async function startTurn() {
-    // ターンをインクリメント
     turnCount++;
 
-    // デッキが0枚になるまでターン進行
     if (deck.length > 0) {
+        // ★★★ 1. まず、必ずターンの準備をする ★★★
         const nextCard = deck[deck.length - 1];
         await animateCardMove(deckPileElement, bidTargetCardElement, nextCard);
         bidTarget = deck.pop();
-
-        if (turnCount === 1) {
-            messageElement.textContent = 'あなたの番です。入札するカードを1枚または2枚選んでください。';
-        } else {
-            messageElement.textContent = 'あなたの番です。入札するカードを選んでください。';
-        }
         
+        // 画面を一度描画して、新しい競り対象を反映させる
         render();
-        updateConfirmButton();
+
+        // ★★★ 2. 準備が終わってから、プレイヤーの状態を判断する ★★★
+        if (playerHand.length === 0) {
+            // 手札がなければ、自動パス処理へ
+            messageElement.textContent = "あなたの手札がありません。自動的にパスします。";
+            playerBid = [];
+            setTimeout(cpuTurn, 1500);
+        } else {
+            // 手札があれば、通常のプレイヤーのターンへ
+            if (turnCount === 1) {
+                messageElement.textContent = 'あなたの番です。入札するカードを1枚または2枚選んでください。';
+            } else {
+                messageElement.textContent = 'あなたの番です。入札するカードを選んでください。';
+            }
+            updateConfirmButton();
+        }
     } else {
+        // 山札がなければ、ゲーム終了判定へ
         checkGameOver();
     }
 }
@@ -413,22 +423,28 @@ async function onConfirmClick() {
 }
 
 async function cpuTurn() {
-    // --- 思考ロジックの分岐 ---
-    // --- 思考ロジックの分岐 ---
-    switch (cpuDifficulty) {
-        case 'easy':
-            cpuBid = cpuTurn_easy();
-            break;
-        case 'hard':
-            cpuBid = cpuTurn_hard();
-            break;
-        case 'special': // ★追加: 特級へのルート
-            cpuBid = cpuTurn_special();
-            break;
-        case 'normal':
-        default:
-            cpuBid = cpuTurn_normal();
-            break;
+    // ★★★ CPUの手札チェック (新規追加) ★★★
+    if (cpuHand.length === 0) {
+        console.log("CPU: 手札が0枚のため、自動的にパスします。");
+        messageElement.textContent = "CPUの手札がありません。CPUはパスします。";
+        cpuBid = [];
+    } else {
+        // --- 従来通りの思考ロジックの分岐 ---
+        switch (cpuDifficulty) {
+            case 'easy':
+                cpuBid = cpuTurn_easy();
+                break;
+            case 'hard':
+                cpuBid = cpuTurn_hard();
+                break;
+            case 'special':
+                cpuBid = cpuTurn_special();
+                break;
+            case 'normal':
+            default:
+                cpuBid = cpuTurn_normal();
+                break;
+        }
     }
     
     // --- 共通の入札処理 ---
@@ -684,46 +700,64 @@ function checkGameOver() {
     const cScore = calculateScore(cpuAcquired);
     let gameOver = false;
     let finalMessage = '';
-    let gameResult = null; // ★追加: 'win', 'lose', 'draw' を管理する状態変数
+    let gameResult = null; 
 
-    if (pScore === 21) {
+    // ★★★ 新しい終了条件：両者の手札が0枚なら即座にゲーム終了 ★★★
+    if (playerHand.length === 0 && cpuHand.length === 0) {
+        gameOver = true;
+        finalMessage = '両者の手札が尽きました！スコアで勝負！';
+        // スコア判定ロジックは山札切れと同じ
+        if (pScore > cScore) {
+            finalMessage += ` 得点が高いあなたの勝利です！(${pScore} vs ${cScore})`;
+            gameResult = 'win';
+        } else if (cScore > pScore) {
+            finalMessage += ` 得点が高いCPUの勝利です！(${pScore} vs ${cScore})`;
+            gameResult = 'lose';
+        } else {
+            finalMessage += ` 引き分けです！(${pScore} vs ${cScore})`;
+            gameResult = 'draw';
+        }
+    }
+    // スコアによる勝敗判定
+    else if (pScore === 21) {
         gameOver = true;
         finalMessage = '21点ぴったり！あなたの勝利です！';
-        gameResult = 'win'; // ★明確に「勝利」と設定
+        gameResult = 'win';
     } else if (cScore === 21) {
         gameOver = true;
         finalMessage = 'CPUが21点！CPUの勝利です！';
-        gameResult = 'lose'; // ★明確に「敗北」と設定
+        gameResult = 'lose';
     } else if (pScore > 21) {
         gameOver = true;
         finalMessage = 'バースト！CPUの勝利です！';
-        gameResult = 'lose'; // ★明確に「敗北」と設定
+        gameResult = 'lose';
     } else if (cScore > 21) {
         gameOver = true;
         finalMessage = 'CPUがバースト！あなたの勝利です！';
-        gameResult = 'win'; // ★明確に「勝利」と設定
-    } else if (deck.length === 0) {
+        gameResult = 'win';
+    } 
+    // 山札切れの判定
+    else if (deck.length === 0) {
         gameOver = true;
+        finalMessage = '山札切れ！スコアで勝負！'; // メッセージを少し統一
         if (pScore > cScore) {
-            finalMessage = `山札切れ！得点が高いあなたの勝利です！(${pScore} vs ${cScore})`;
-            gameResult = 'win'; // ★明確に「勝利」と設定
+            finalMessage += ` 得点が高いあなたの勝利です！(${pScore} vs ${cScore})`;
+            gameResult = 'win';
         } else if (cScore > pScore) {
-            finalMessage = `山札切れ！得点が高いCPUの勝利です！(${pScore} vs ${cScore})`;
-            gameResult = 'lose'; // ★明確に「敗北」と設定
+            finalMessage += ` 得点が高いCPUの勝利です！(${pScore} vs ${cScore})`;
+            gameResult = 'lose';
         } else {
-            finalMessage = `山札切れ！引き分けです！(${pScore} vs ${cScore})`;
-            gameResult = 'draw'; // ★明確に「引き分け」と設定
+            finalMessage += ` 引き分けです！(${pScore} vs ${cScore})`;
+            gameResult = 'draw';
         }
     }
     
     if (gameOver) {
-        // ★★★ 結果に応じて、シンプルにジングルを再生 ★★★
         if (gameResult === 'win') {
             playVictoryJingle();
         } else if (gameResult === 'lose') {
             playDefeatJingle();
         }
-        // 'draw' の場合は何も鳴らさない
 
         messageElement.textContent = finalMessage;
         confirmButton.style.display = 'none';
