@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Burst Auction - β版</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- 相手(CPU)エリア -->
+        <div id="cpu-area" class="player-area">
+            <h2>CPU</h2>
+            <div class="info-section">
+                <span>手札: <span id="cpu-hand-count">13</span>枚</span>
+                <span>得点: <span id="cpu-score">0</span></span>
+            </div>
+            <div class="cards-display">
+                <div class="used-cards-container">
+                    <p>使用済み:</p>
+                    <div id="cpu-used-cards" class="card-list"></div>
+                </div>
+                <div class="acquired-cards-container">
+                    <p>獲得カード:</p>
+                    <div id="cpu-acquired-cards" class="card-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ゲームフィールド -->
+        <div id="field-area">
+            <div id="deck-and-bid">
+                <div id="deck-area">
+                    <p>山札</p>
+                    <div id="deck-pile" class="card card-back">◆</div>
+                    <span id="deck-count">13</span>
+                </div>
+                <div id="bid-target-area">
+                    <p>競り対象</p>
+                    <div id="bid-target-card"></div>
+                </div>
+            </div>
+            <div id="bidding-area">
+                <div id="cpu-bid-cards" class="bid-display"></div>
+                <div id="player-bid-cards" class="bid-display"></div>
+            </div>
+            <div id="difficulty-selector">
+                <p>CPUの強さ:</p>
+                <label><input type="radio" name="difficulty" value="easy"> 初級</label>
+                <label><input type="radio" name="difficulty" value="normal" checked> 中級</label>
+                <label><input type="radio" name="difficulty" value="hard"> 上級</label>
+                <label><input type="radio" name="difficulty" value="special"> 特級</label>
+            </div>
+            <div class="button-container">
+                <button id="confirm-button" disabled>決定</button>
+                <button id="restart-button" style="display: none;">もう一度プレイする</button>
+            </div>
+            <p id="message-area">ゲームの準備中...</p>
+        </div>
+
+        <!-- あなた(プレイヤー)エリア -->
+        <div id="player-area" class="player-area">
+            <h2>あなた</h2>
+            <div class="info-section">
+                <span>得点: <span id="player-score">0</span></span>
+            </div>
+            <div class="cards-display">
+                <div class="used-cards-container">
+                    <p>使用済み:</p>
+                    <div id="player-used-cards" class="card-list"></div>
+                </div>
+                 <div class="acquired-cards-container">
+                    <p>獲得カード:</p>
+                    <div id="player-acquired-cards" class="card-list"></div>
+                </div>
+            </div>
+            <p>あなたの手札</p>
+            <div id="player-hand" class="card-list hand"></div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
