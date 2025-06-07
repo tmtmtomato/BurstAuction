@@ -135,7 +135,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
         }
     }
-    
+    /**
+     * 指定されたHTML要素の中に、指定された枚数だけカードの裏面を描画します。
+     * @param {HTMLElement} element - 描画先の親要素
+     * @param {number} count - 描画するカードの枚数
+     */
+    function renderCardBacks(element, count) {
+        element.innerHTML = '';
+        for (let i = 0; i < count; i++) {
+            // isBack=true で裏面カードを生成
+            const cardElement = createCardElement({}, true); 
+            element.appendChild(cardElement);
+        }
+    }
+
     // --- アニメーション・サウンドヘルパー ---
     /**
      * アニメーションの実行状態を管理し、手札のロック状態やボタンの有効/無効を更新します。
@@ -527,35 +540,45 @@ document.addEventListener('DOMContentLoaded', () => {
             if (snapshot.exists()) {
                 const gameState = snapshot.val();
                 if (gameState && gameState.players) {
-                    window.gameState = gameState; // グローバルに最新の状態を保持
+                    window.gameState = gameState; 
                     renderMultiplayerGame(gameState);
     
-                    // phaseが'bidding'の時だけ判定処理を行う
+                    // ★★★★★ここからロジックを全面的に変更★★★★★
+    
+                    // 【役割分担】
+                    // 'bidding'フェーズの仕事：入札が揃ったら'reveal'フェーズに変えること
                     if (gameState.phase === 'bidding') {
-                        const player1Bid = gameState.bids.player1.filter(c => c.rank !== "none");
-                        const player2Bid = gameState.bids.player2.filter(c => c.rank !== "none");
-                    
-                        // ★★★★★ここから条件を変更★★★★★
+                        const p1Bid = gameState.bids.player1.filter(c => c.rank !== "none");
+                        const p2Bid = gameState.bids.player2.filter(c => c.rank !== "none");
                         const p1Hand = gameState.hands.player1 || [];
                         const p2Hand = gameState.hands.player2 || [];
                         const isP1HandEmpty = p1Hand.length === 0 || p1Hand[0].rank === 'none';
                         const isP2HandEmpty = p2Hand.length === 0 || p2Hand[0].rank === 'none';
-                    
-                        // (A) 両者が入札済み、または
-                        // (B) 片方が入札済みで、もう片方の手札が0枚
-                        const shouldResolve = (player1Bid.length > 0 && player2Bid.length > 0) ||
-                                              (player1Bid.length > 0 && isP2HandEmpty) ||
-                                              (player2Bid.length > 0 && isP1HandEmpty);
-                    
-                        if (shouldResolve) {
-                            if (localPlayerId === 'player1') {
-                                console.log("両者の入札を検知(または片方が手札切れ)！これから勝敗判定を行います。");
-                                setTimeout(() => {
-                                    resolveMultiplayerBid(gameState);
-                                }, 1500);
-                            }
+                        
+                        const shouldReveal = (p1Bid.length > 0 && p2Bid.length > 0) ||
+                                             (p1Bid.length > 0 && isP2HandEmpty) ||
+                                             (p2Bid.length > 0 && isP1HandEmpty);
+    
+                        if (shouldReveal && localPlayerId === 'player1') {
+                            // 'reveal'フェーズに移行させる
+                            gameRef.update({
+                                phase: 'reveal',
+                                message: 'いざ、勝負！'
+                            });
                         }
                     }
+                    
+                    // 'reveal'フェーズの仕事：少し待ってから勝敗判定を呼び出すこと
+                    if (gameState.phase === 'reveal' && localPlayerId === 'player1') {
+                        // 重複実行を防ぐため、一度だけタイマーをセットする
+                        if (!window.revealTimer) {
+                            window.revealTimer = setTimeout(() => {
+                                resolveMultiplayerBid(gameState);
+                                window.revealTimer = null; // タイマーをリセット
+                            }, 1500); // 1.5秒待つ
+                        }
+                    }
+                    // ★★★★★ここまで変更★★★★★
                 }
             } else {
                 alert("部屋が閉じられました。");
@@ -563,6 +586,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+    
 
     // ★★★ 改訂：部屋から退出する処理 ★★★
     function leaveRoom() {
@@ -708,11 +732,22 @@ document.addEventListener('DOMContentLoaded', () => {
         cpuHandCountElement.textContent = hands[opponentId] ? hands[opponentId].length : 0;
         renderCardList(cpuUsedCardsElement, opponentUsedData);
         renderCardList(cpuAcquiredCardsElement, opponentAcquiredData);
-        renderCardList(cpuBidCardsElement, opponentBidData);
+        // 相手の入札カードの描画ロジック
+        // 自分のターンで、かつ bidding フェーズ中は、相手の入札を「裏面」で表示する
+        if (phase === 'bidding' && turn === myPlayerId) {
+            // プレースホルダーを除いた、実際の入札枚数をカウント
+            const opponentBidCount = opponentBidData.filter(c => c.rank !== "none").length;
+            renderCardBacks(cpuBidCardsElement, opponentBidCount);
+        } else {
+            // それ以外の状況（公開フェーズや、相手のターンなど）では「表面」を表示する
+            renderCardList(cpuBidCardsElement, opponentBidData);
+        }
     
         deckCountElement.textContent = deck ? Object.keys(deck).length : 0;
         bidTargetCardElement.innerHTML = '';
-        if (bidTarget) { bidTargetCardElement.appendChild(createCardElement(bidTarget)); }
+        if (bidTarget) { 
+            bidTargetCardElement.appendChild(createCardElement(bidTarget));
+        }
         messageElement.textContent = message;
     
         // --- 4. 最後にターン制御などを行う ---
