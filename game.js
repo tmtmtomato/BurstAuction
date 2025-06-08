@@ -538,16 +538,24 @@ document.addEventListener('DOMContentLoaded', () => {
         if (gameStateListener) { gameRef.off('value', gameStateListener); }
         gameStateListener = gameRef.on('value', (snapshot) => {
             if (snapshot.exists()) {
+                const oldGameState = window.gameState;
                 const gameState = snapshot.val();
+                
                 if (gameState && gameState.players) {
-                    window.gameState = gameState; 
+                    // 相手の入室を検知してサウンドを鳴らす
+                    if (oldGameState && oldGameState.players.player2 && 
+                        !oldGameState.players.player2.isConnected && 
+                        gameState.players.player2.isConnected) {
+                        playSound('win', 0.15, 0.4);
+                    }
+    
+                    window.gameState = gameState;
                     renderMultiplayerGame(gameState);
     
-                    // ★★★★★ここからロジックを全面的に変更★★★★★
+                    // --- 各フェーズの役割分担 ---
     
-                    // 【役割分担】
-                    // 'bidding'フェーズの仕事：入札が揃ったら'reveal'フェーズに変えること
-                    if (gameState.phase === 'bidding') {
+                    // 'bidding'フェーズ: 入札が揃ったら'reveal'へ移行
+                    if (gameState.phase === 'bidding' && localPlayerId === 'player1') {
                         const p1Bid = gameState.bids.player1.filter(c => c.rank !== "none");
                         const p2Bid = gameState.bids.player2.filter(c => c.rank !== "none");
                         const p1Hand = gameState.hands.player1 || [];
@@ -559,26 +567,22 @@ document.addEventListener('DOMContentLoaded', () => {
                                              (p1Bid.length > 0 && isP2HandEmpty) ||
                                              (p2Bid.length > 0 && isP1HandEmpty);
     
-                        if (shouldReveal && localPlayerId === 'player1') {
-                            // 'reveal'フェーズに移行させる
-                            gameRef.update({
-                                phase: 'reveal',
-                                message: 'いざ、勝負！'
-                            });
+                        if (shouldReveal) {
+                            gameRef.update({ phase: 'reveal', message: 'いざ、勝負！' });
                         }
                     }
                     
-                    // 'reveal'フェーズの仕事：少し待ってから勝敗判定を呼び出すこと
+                    // 'reveal'フェーズ: 1.5秒待ってから'judging'へ移行
                     if (gameState.phase === 'reveal' && localPlayerId === 'player1') {
-                        // 重複実行を防ぐため、一度だけタイマーをセットする
-                        if (!window.revealTimer) {
-                            window.revealTimer = setTimeout(() => {
-                                resolveMultiplayerBid(gameState);
-                                window.revealTimer = null; // タイマーをリセット
-                            }, 1500); // 1.5秒待つ
-                        }
+                        setTimeout(() => {
+                            gameRef.update({ phase: 'judging' });
+                        }, 1500);
                     }
-                    // ★★★★★ここまで変更★★★★★
+    
+                    // 'judging'フェーズ: 勝敗判定を実行
+                    if (gameState.phase === 'judging' && localPlayerId === 'player1') {
+                        resolveMultiplayerBid(gameState);
+                    }
                 }
             } else {
                 alert("部屋が閉じられました。");
@@ -944,14 +948,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     async function resolveMultiplayerBid(currentState) {
-        console.log("勝敗判定ロジック実行中...");
-    
-        // 判定処理が重複して走らないように、phaseを'resolving'（判定中）に更新する
-        // これでもしplayer2も判定処理を呼んでしまっても、ここでブロックされる
-        if (currentState.phase !== 'bidding') {
-            console.log("すでに判定処理が実行されているため、スキップします。");
+        // ガード処理: 'judging'フェーズ以外、またはplayer1以外からの実行を防ぐ
+        if (currentState.phase !== 'judging' || localPlayerId !== 'player1') {
             return;
         }
+        // 二重実行防止: これから計算するので、まずフェーズを'resolving'に変更する
         await gameRef.child('phase').set('resolving');
     
         // --- 1. スコア計算と勝者判定 ---
@@ -965,9 +966,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (p1BidScore > p2BidScore) {
             winnerId = 'player1';
             message = `${currentState.players.player1.name}の勝利！(${p1BidScore} vs ${p2BidScore})`;
+            playSound('win', 0.2, 0.4); // 勝ったラウンドの音（両者に鳴る）
         } else if (p2BidScore > p1BidScore) {
             winnerId = 'player2';
             message = `${currentState.players.player2.name}の勝利！(${p1BidScore} vs ${p2BidScore})`;
+            playSound('win', 0.2, 0.4);
         } else {
             winnerId = 'draw';
             message = `引き分け！(${p1BidScore}) カードは流れます。`;
@@ -976,122 +979,70 @@ document.addEventListener('DOMContentLoaded', () => {
         // --- 2. データベース更新内容の準備 ---
         const updates = {};
         const placeholder = { rank: "none", suit: "N", value: 0 };
-    
-        // a. 勝者がいた場合、競り対象カードを獲得カードに追加
         if (winnerId !== 'draw') {
-            // currentStateから最新の獲得カードリストを取得し、新しいカードを追加
             const winnerAcquired = currentState.acquiredCards[winnerId].filter(c => c.rank !== "none");
             winnerAcquired.push(currentState.bidTarget);
             updates[`/acquiredCards/${winnerId}`] = winnerAcquired;
         }
-        
-        // b. 両者の入札カードを使用済みカードに移動
         const p1Used = currentState.usedCards.player1.filter(c => c.rank !== "none");
         updates['/usedCards/player1'] = [...p1Used, ...p1Bid];
         const p2Used = currentState.usedCards.player2.filter(c => c.rank !== "none");
         updates['/usedCards/player2'] = [...p2Used, ...p2Bid];
-        
-        // c. 両者の手札から入札したカードを削除
         const p1Hand = currentState.hands.player1.filter(card => !p1Bid.some(bidCard => bidCard.suit === card.suit && bidCard.rank === card.rank));
         updates['/hands/player1'] = p1Hand.length > 0 ? p1Hand : [placeholder];
         const p2Hand = currentState.hands.player2.filter(card => !p2Bid.some(bidCard => bidCard.suit === card.suit && bidCard.rank === card.rank));
         updates['/hands/player2'] = p2Hand.length > 0 ? p2Hand : [placeholder];
-        
-        // d. 入札エリアをリセット
         updates['/bids/player1'] = [placeholder];
         updates['/bids/player2'] = [placeholder];
-        
-        // e. 次の競り対象カードを山札から引く
         const nextDeck = currentState.deck;
-        const nextBidTarget = nextDeck.length > 0 ? nextDeck.pop() : null;
-        updates['/deck'] = nextDeck;
+        const nextBidTarget = nextDeck && nextDeck.length > 0 ? nextDeck.pop() : null;
+        updates['/deck'] = nextDeck ? nextDeck : [placeholder];
         updates['/bidTarget'] = nextBidTarget;
-    
-        // f. メッセージと次のターンの設定
         updates['/message'] = message + " ... 次のターンへ";
         
         // --- 3. データベースを一度に更新 ---
         await gameRef.update(updates);
     
-        // --- 4. 少し待ってから、次のターンを開始する ---
+        // --- 4. 少し待ってから、次のターンまたはゲーム終了処理を開始する ---
         setTimeout(async () => {
-            // --- ゲーム終了条件のチェック ---
-            // ※注意：スコア計算は「更新後」のスコアで行う必要があるため、
-            //         updatesオブジェクトから計算し直すのが確実。
-            const p1AcquiredAfter = updates[`/acquiredCards/player1`] || currentState.acquiredCards.player1;
-            const p2AcquiredAfter = updates[`/acquiredCards/player2`] || currentState.acquiredCards.player2;
-            const p1Score = calculateScore(p1AcquiredAfter.filter(c => c.rank !== "none"));
-            const p2Score = calculateScore(p2AcquiredAfter.filter(c => c.rank !== "none"));
-        
-            const p1HandAfter = updates['/hands/player1'];
-            const p2HandAfter = updates['/hands/player2'];
-            const isP1HandEmpty = !p1HandAfter || p1HandAfter[0].rank === 'none';
-            const isP2HandEmpty = !p2HandAfter || p2HandAfter[0].rank === 'none';
-        
+            // DBから「今」の状態を再取得して終了判定を行う
+            const latestSnapshot = await gameRef.once('value');
+            const latestState = latestSnapshot.val();
+    
+            const p1Score = calculateScore(latestState.acquiredCards.player1.filter(c => c.rank !== "none"));
+            const p2Score = calculateScore(latestState.acquiredCards.player2.filter(c => c.rank !== "none"));
+            const isP1HandEmpty = latestState.hands.player1[0].rank === 'none';
+            const isP2HandEmpty = latestState.hands.player2[0].rank === 'none';
+            
             let gameOver = false;
             let finalMessage = "";
-        
-            // 終了条件を順番にチェック
-            if (p1Score > 21) {
-                gameOver = true;
-                finalMessage = `${currentState.players.player1.name}がバースト！ ${currentState.players.player2.name}の勝利です！`;
-            } else if (p2Score > 21) {
-                gameOver = true;
-                finalMessage = `${currentState.players.player2.name}がバースト！ ${currentState.players.player1.name}の勝利です！`;
-            } else if (p1Score === 21) {
-                gameOver = true;
-                finalMessage = `${currentState.players.player1.name}が21点ぴったり！勝利です！`;
-            } else if (p2Score === 21) {
-                gameOver = true;
-                finalMessage = `${currentState.players.player2.name}が21点ぴったり！勝利です！`;
-            } else if (isP1HandEmpty && isP2HandEmpty) {
-                gameOver = true;
-                finalMessage = "両者の手札が尽きました！スコアで勝負！ ... ";
-                if (p1Score > p2Score) finalMessage += `${currentState.players.player1.name}の勝利！ (${p1Score} vs ${p2Score})`;
-                else if (p2Score > p1Score) finalMessage += `${currentState.players.player2.name}の勝利！ (${p2Score} vs ${p1Score})`;
-                else finalMessage += `引き分け！ (${p1Score} vs ${p2Score})`;
-            } else if (!updates['/bidTarget']) { // 次の競り対象カードがない（山札切れ）
-                gameOver = true;
-                finalMessage = "山札が切れました！スコアで勝負！ ... ";
-                if (p1Score > p2Score) finalMessage += `${currentState.players.player1.name}の勝利！ (${p1Score} vs ${p2Score})`;
-                else if (p2Score > p1Score) finalMessage += `${currentState.players.player2.name}の勝利！ (${p2Score} vs ${p1Score})`;
-                else finalMessage += `引き分け！ (${p1Score} vs ${p2Score})`;
+            let p1Result = 'draw', p2Result = 'draw';
+    
+            if (p1Score > 21) { gameOver = true; finalMessage = `${latestState.players.player1.name}がバースト！ ${latestState.players.player2.name}の勝利です！`; p1Result = 'lose'; p2Result = 'win'; }
+            else if (p2Score > 21) { gameOver = true; finalMessage = `${latestState.players.player2.name}がバースト！ ${latestState.players.player1.name}の勝利です！`; p1Result = 'win'; p2Result = 'lose'; }
+            else if (p1Score === 21) { gameOver = true; finalMessage = `${latestState.players.player1.name}が21点ぴったり！勝利です！`; p1Result = 'win'; p2Result = 'lose'; }
+            else if (p2Score === 21) { gameOver = true; finalMessage = `${latestState.players.player2.name}が21点ぴったり！勝利です！`; p1Result = 'lose'; p2Result = 'win'; }
+            else if (!latestState.bidTarget) { /* 山札切れ */ gameOver = true; finalMessage = "山札切れ！スコア勝負！"; }
+            else if (isP1HandEmpty && isP2HandEmpty) { /* 両者手札切れ */ gameOver = true; finalMessage = "両者手札切れ！スコア勝負！"; }
+            
+            if (gameOver && finalMessage.includes("スコア勝負")) {
+                 if (p1Score > p2Score) { finalMessage += ` ${latestState.players.player1.name}の勝利！`; p1Result = 'win'; p2Result = 'lose'; }
+                 else if (p2Score > p1Score) { finalMessage += ` ${latestState.players.player2.name}の勝利！`; p1Result = 'lose'; p2Result = 'win'; }
+                 else { finalMessage += ` 引き分け！`; }
             }
-        
-            // --- 判定結果に応じてDBを更新 ---
+    
             if (gameOver) {
-                // ゲーム終了時の更新
-                const finalUpdates = {
-                    'phase': 'finished',
-                    'message': finalMessage
-                };
-                await gameRef.update(finalUpdates);
+                // 各プレイヤーに結果を通知し、DBを更新
+                if (localPlayerId === 'player1' && p1Result === 'win') playVictoryJingle(); else if (localPlayerId === 'player1' && p1Result === 'lose') playDefeatJingle();
+                if (localPlayerId === 'player2' && p2Result === 'win') playVictoryJingle(); else if (localPlayerId === 'player2' && p2Result === 'lose') playDefeatJingle();
+                await gameRef.update({ 'phase': 'finished', 'message': finalMessage });
             } else {
-                // ゲーム続行時の更新
-                const nextTurnUpdates = {
-                    'phase': 'bidding',
-                    // 'turn'と'message'は状況に応じて変える
-                };
-                // isP1HandEmpty, isP2HandEmpty はこのsetTimeoutの前に計算済み
-                if (!isP1HandEmpty && !isP2HandEmpty) {
-                    // 両者とも手札あり -> 通常通りP1のターン
-                    nextTurnUpdates.turn = 'player1';
-                    nextTurnUpdates.message = `${currentState.players.player1.name}の番です。入札するカードを選んでください。`;
-                } else if (isP1HandEmpty && !isP2HandEmpty) {
-                    // P1だけ手札なし -> P2のターン
-                    nextTurnUpdates.turn = 'player2';
-                    nextTurnUpdates.message = `${currentState.players.player1.name}の手札がないため、${currentState.players.player2.name}の番です。`;
-                } else if (!isP1HandEmpty && isP2HandEmpty) {
-                    // P2だけ手札なし -> P1のターン
-                    nextTurnUpdates.turn = 'player1';
-                    nextTurnUpdates.message = `${currentState.players.player2.name}の手札がないため、${currentState.players.player1.name}の番です。`;
-                }
-                // 両者の手札が0枚の場合は、gameOverのロジックで処理されるので、ここでは考慮不要
-
+                const nextTurnUpdates = { 'phase': 'bidding', 'turn': 'player1', 'message': `${latestState.players.player1.name}の番です。` };
+                if (isP1HandEmpty) { nextTurnUpdates.turn = 'player2'; nextTurnUpdates.message = `${latestState.players.player1.name}の手札がないため、${latestState.players.player2.name}の番です。`; }
+                else if (isP2HandEmpty) { nextTurnUpdates.message = `${latestState.players.player2.name}の手札がないため、${latestState.players.player1.name}の番です。`; }
                 await gameRef.update(nextTurnUpdates);
-                // ★★★★★ここまで修正★★★★★
             }
-        }, 2500); // 2.5秒待って結果を見せる
+        }, 2500);
     }
 
     // ===============================================
@@ -1338,48 +1289,66 @@ document.addEventListener('DOMContentLoaded', () => {
         progressTurn();
     }
     async function onConfirmClick_multi() {
-        if (selectedCards.length === 0) { return; }
+        if (selectedCards.length === 0 || isAnimating) { return; }
+        isAnimating = true; // ★二重クリック防止
+        confirmButton.disabled = true;
     
         const myPlayerId = localPlayerId;
         const opponentId = myPlayerId === 'player1' ? 'player2' : 'player1';
-        
-        // 最新のゲーム状態を取得
-        const snapshot = await gameRef.once('value');
-        const gameState = snapshot.val();
-        
-        const myHand = gameState.hands[myPlayerId] || [];
-        const bidData = myHand.filter(card => selectedCards.includes(card.suit + card.rank));
     
-        // 相手の手札が空かどうかをチェック
-        const opponentHand = gameState.hands[opponentId] || [];
-        const isOpponentHandEmpty = opponentHand.length === 0 || opponentHand[0].rank === 'none';
+        console.log(`%c[クリック] ${myPlayerId}が決定ボタンを押しました。`, 'color: blue; font-weight: bold;');
+        console.log('[クリック] 現在のselectedCards:', selectedCards);
+
+        try {
+            // 1. 最新のゲーム状態を取得
+            const snapshot = await gameRef.once('value');
+            const gameState = snapshot.val();
+            console.log('[クリック] DBから取得した最新のgameState:', gameState);
+            
+            // 2. 自分の「本当の」手札から、選択されたカードのデータを特定する
+            const myTrueHand = gameState.hands[myPlayerId] || [];
+            const bidData = myTrueHand.filter(card => selectedCards.includes(card.suit + card.rank));
     
-        if (isOpponentHandEmpty) {
-            // ★★★ 相手の手札が0枚の場合の特別処理 ★★★
-            console.log("相手の手札が0枚なので、即座に勝利判定に進みます。");
+            // 3. 選択したカードが本当に手札に存在するかチェック
+            if (bidData.length !== selectedCards.length) {
+                console.error("手札にないカードが選択されています。リロードします。");
+                // alert("データに食い違いが発生しました。ページを更新します。");
+                // window.location.reload();
+                isAnimating = false; // エラーなのでロック解除
+                return;
+            }
     
-            // 自分の入札だけをDBにセットし、すぐに勝敗判定を呼び出す
+            // 4. 相手の手札が空かチェック（これは前のロジックと同じ）
+            const opponentHand = gameState.hands[opponentId] || [];
+            const isOpponentHandEmpty = opponentHand.length === 0 || opponentHand[0].rank === 'none';
+    
             const updates = {};
             updates[`/bids/${myPlayerId}`] = bidData;
-            // 相手の入札は空（プレースホルダー）のまま
-            updates[`/bids/${opponentId}`] = [{ rank: "none", suit: "N", value: 0 }];
-            updates['/message'] = "勝敗を判定します...";
+    
+            if (isOpponentHandEmpty) {
+                updates[`/bids/${opponentId}`] = [{ rank: "none", suit: "N", value: 0 }];
+                updates['/message'] = "勝敗を判定します...";
+            } else {
+                updates['/turn'] = opponentId;
+                updates['/message'] = `${gameState.players[opponentId].name}が考えています...`;
+            }
             
+            // 5. DBを更新
+            console.log('[クリック] これからDBに送るupdates:', updates);
             await gameRef.update(updates);
-            // この後、gameStateListenerが変更を検知して、resolveMultiplayerBidを呼び出すはず
+            console.log('[クリック] DBの更新が完了しました。');
             
-        } else {
-            // ★★★ 通常の処理 (相手の手札がある場合) ★★★
-            const updates = {};
-            updates[`/bids/${myPlayerId}`] = bidData;
-            updates['/turn'] = opponentId;
-            updates['/message'] = `${gameState.players[opponentId].name}が考えています...`;
-            
-            await gameRef.update(updates);
+            // 6. ★★★ 自分のローカルの選択状態を即座にリセット ★★★
+            // これで、次のターンが自分に戻ってきた時に、古いカードを選択できないようにする
+            selectedCards = []; 
+            // renderMultiplayerGame() は listener経由で呼ばれるので、ここでは呼ばない
+    
+        } catch (error) {
+            console.error("入札情報の送信に失敗しました:", error);
+        } finally {
+            isAnimating = false; // 処理が終わったらロック解除
+            // updateConfirmButton() も listener経由で呼ばれるので不要
         }
-        
-        // 自分の選択状態はリセット
-        selectedCards = [];
     }
     
 
@@ -1434,6 +1403,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     soloPlayButton.addEventListener('click', () => {
+        initAudio();
         console.log("モード: ひとりプレイ");
         gameMode = 'solo';
         showScreen('game');
@@ -1441,14 +1411,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     multiPlayButton.addEventListener('click', () => {
+        initAudio();
         console.log("モード: ふたりプレイ");
         gameMode = 'multi';
         showScreen('room');
     });
 
-    createRoomButton.addEventListener('click', createRoom);
+    createRoomButton.addEventListener('click', () => {
+        initAudio(); 
+        createRoom();
+    });
 
     joinRoomButton.addEventListener('click', async () => {
+        initAudio();
         const roomId = roomIdInput.value.trim();
         if (!roomId) {
             alert("部屋の番号を入力してください。");
