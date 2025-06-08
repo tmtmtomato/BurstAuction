@@ -32,7 +32,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const roomIdInput = document.getElementById('room-id-input');
     const backToModeSelectionButton = document.getElementById('back-to-mode-selection-button');
     const confirmButton = document.getElementById('confirm-button');
-    const restartButton = document.getElementById('restart-button');
+    const restartButton = document.getElementById('restart-button');　// ←リスタートボタン
+    const rematchButton = document.getElementById('rematch-button'); // ★追加
+    const leaveRoomButton = document.getElementById('leave-room-button'); // ★追加
     const difficultyRadios = document.querySelectorAll('input[name="difficulty"]');
     // [C] ゲーム表示要素
     const playerHandElement = document.getElementById('player-hand');
@@ -530,6 +532,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // (おまけ) メッセージも更新するよう予約しておくと親切、なのだがplayersがここでは定義されてなくて使えない。要修正。
         //gameRef.child('message').onDisconnect().set(`${players[playerId].name}の接続が切れました...`);
 
+        // ★★★ onDisconnect の設定を強化 ★★★
+        // 自分が切断されたら、'isConnected'をfalseにし、'leftGame'フラグを立てる
+        await playerRef.update({ isConnected: true, leftGame: false });
+        playerRef.onDisconnect().update({ isConnected: false, leftGame: true });
+
         showScreen('game');
         startRealtimeListener();
     }
@@ -537,80 +544,174 @@ document.addEventListener('DOMContentLoaded', () => {
     function startRealtimeListener() {
         if (gameStateListener) { gameRef.off('value', gameStateListener); }
         gameStateListener = gameRef.on('value', (snapshot) => {
-            if (snapshot.exists()) {
-                const oldGameState = window.gameState;
-                const gameState = snapshot.val();
-                
-                if (gameState && gameState.players) {
-                    // 相手の入室を検知してサウンドを鳴らす
-                    if (oldGameState && oldGameState.players.player2 && 
-                        !oldGameState.players.player2.isConnected && 
-                        gameState.players.player2.isConnected) {
-                        playSound('win', 0.15, 0.4);
+    
+            // 【A】部屋が削除された時の処理
+            if (!snapshot.exists()) {
+                alert("部屋が解散されました。");
+                if (gameStateListener) gameRef.off('value', gameStateListener);
+                // ローカルの状態をきれいにリセット
+                currentRoomId = null;
+                localPlayerId = null;
+                gameRef = null;
+                gameStateListener = null;
+                selectedCards = [];
+                showScreen('mode-selection');
+                return; // これ以上何もしない
+            }
+    
+            // 【B】部屋が存在する場合の通常の処理
+            const oldGameState = window.gameState;
+            const gameState = snapshot.val();
+            
+            if (gameState && gameState.players) {
+                window.gameState = gameState;
+                renderMultiplayerGame(gameState);
+    
+                // --- ここから各種の自動処理 ---
+    
+                // 【B-1】相手の入室を検知
+                if (oldGameState && oldGameState.players.player2 && 
+                    !oldGameState.players.player2.isConnected && 
+                    gameState.players.player2.isConnected) {
+                    playSound('win', 0.15, 0.4);
+                }
+    
+                // 【B-2】相手の退出/切断を検知（不戦勝処理）
+                if (gameState.phase !== 'finished') {
+                    const opponentId = localPlayerId === 'player1' ? 'player2' : 'player1';
+                    
+                    // 相手が退出していて、かつ、自分がまだ退出していない場合
+                    if (gameState.players[opponentId] && gameState.players[opponentId].leftGame && 
+                        gameState.players[localPlayerId] && !gameState.players[localPlayerId].leftGame) {
+                        
+                        // ★★★★★ 「自分が」更新処理を行う ★★★★★
+                        console.log("相手が退出したのを検知。不戦勝処理を実行します。");
+                        const finalMessage = `${gameState.players[opponentId].name}が退出しました。あなたの勝利です！`;
+                        gameRef.update({ phase: 'finished', message: finalMessage });
+                        playVictoryJingle();
                     }
+                }
     
-                    window.gameState = gameState;
-                    renderMultiplayerGame(gameState);
-    
-                    // --- 各フェーズの役割分担 ---
-    
-                    // 'bidding'フェーズ: 入札が揃ったら'reveal'へ移行
-                    if (gameState.phase === 'bidding' && localPlayerId === 'player1') {
+                // 【B-3】ゲーム進行のフェーズ管理（部屋主'player1'が担当）
+                if (localPlayerId === 'player1') {
+                    // 'bidding'フェーズ: 入札が揃ったら'reveal'へ
+                    if (gameState.phase === 'bidding') {
                         const p1Bid = gameState.bids.player1.filter(c => c.rank !== "none");
                         const p2Bid = gameState.bids.player2.filter(c => c.rank !== "none");
                         const p1Hand = gameState.hands.player1 || [];
                         const p2Hand = gameState.hands.player2 || [];
                         const isP1HandEmpty = p1Hand.length === 0 || p1Hand[0].rank === 'none';
                         const isP2HandEmpty = p2Hand.length === 0 || p2Hand[0].rank === 'none';
-                        
-                        const shouldReveal = (p1Bid.length > 0 && p2Bid.length > 0) ||
-                                             (p1Bid.length > 0 && isP2HandEmpty) ||
-                                             (p2Bid.length > 0 && isP1HandEmpty);
-    
+                        const shouldReveal = (p1Bid.length > 0 && p2Bid.length > 0) || (p1Bid.length > 0 && isP2HandEmpty) || (p2Bid.length > 0 && isP1HandEmpty);
                         if (shouldReveal) {
                             gameRef.update({ phase: 'reveal', message: 'いざ、勝負！' });
                         }
                     }
-                    
-                    // 'reveal'フェーズ: 1.5秒待ってから'judging'へ移行
-                    if (gameState.phase === 'reveal' && localPlayerId === 'player1') {
-                        setTimeout(() => {
-                            gameRef.update({ phase: 'judging' });
-                        }, 1500);
+                    // 'reveal'フェーズ: 1.5秒待って'judging'へ
+                    else if (gameState.phase === 'reveal') {
+                        setTimeout(() => { gameRef.update({ phase: 'judging' }); }, 1500);
                     }
-    
                     // 'judging'フェーズ: 勝敗判定を実行
-                    if (gameState.phase === 'judging' && localPlayerId === 'player1') {
+                    else if (gameState.phase === 'judging') {
                         resolveMultiplayerBid(gameState);
                     }
+                    // 'finished'フェーズ: 再戦と部屋削除の管理
+                    else if (gameState.phase === 'finished') {
+                        const p1 = gameState.players.player1;
+                        const p2 = gameState.players.player2;
+                        // 両者が再戦を望んだら、ゲームをリセット
+                        if (p1.wantsRematch && p2.wantsRematch) {
+                            resetGameForRematch();
+                        }
+                        // 両者が退出したら、部屋を削除
+                        else if (p1.leftGame && p2.leftGame) {
+                            gameRef.remove();
+                        }
+                    }
                 }
-            } else {
-                alert("部屋が閉じられました。");
-                leaveRoom();
             }
         });
     }
     
+    // ★★★ ゲームリセット用の新しい関数を作成 ★★★
+    function resetGameForRematch() {
+        // createRoomのロジックを再利用
+        const initialDeck = createInitialDeck();
+        const { player1Hand, player2Hand, deck: remainingDeck } = dealInitialHands(initialDeck);
+        const placeholder = { rank: "none", suit: "N", value: 0 };
+        
+        // 新しいゲーム状態を作成
+        const newGameState = {
+            // roomId, players の名前と isConnected は維持
+            roomId: currentRoomId,
+            players: {
+                player1: { name: 'プレイヤー1', score: 0, isConnected: true, wantsRematch: false },
+                player2: { name: 'プレイヤー2', score: 0, isConnected: true, wantsRematch: false }
+            },
+            // ゲームの初期状態に戻す
+            turn: 'player1',
+            phase: 'bidding',
+            message: '再戦開始！プレイヤー1の番です。',
+            deck: remainingDeck,
+            hands: { player1: player1Hand, player2: player2Hand },
+            bids: { player1: [placeholder], player2: [placeholder] },
+            usedCards: { player1: [placeholder], player2: [placeholder] },
+            acquiredCards: { player1: [placeholder], player2: [placeholder] },
+            bidTarget: null
+        };
 
-    // ★★★ 改訂：部屋から退出する処理 ★★★
-    function leaveRoom() {
-        // 予約していたonDisconnect処理をキャンセルする
+        // 新しいbidTargetをセット
+        const firstBidTarget = newGameState.deck.pop();
+        newGameState.bidTarget = firstBidTarget;
+
+        // Firebaseのルームデータ全体を、新しいゲーム状態に丸ごと上書きする
+        gameRef.set(newGameState);
+    }
+
+    async function leaveRoom() {
         if (gameRef && localPlayerId) {
-            const playerRef = gameRef.child('players/' + localPlayerId);
-            playerRef.child('isConnected').onDisconnect().cancel(); // 予約キャンセル
-            playerRef.child('isConnected').set(false); // 正常に退出したことを能動的に通知
+            // 【フェーズ1】Firebaseの状態を確認し、適切な処理を決定する
+            try {
+                // まずDBから最新のゲーム状態を一度だけ取得する
+                const snapshot = await gameRef.once('value');
+                
+                if (snapshot.exists()) {
+                    const gameState = snapshot.val();
+                    const opponentId = localPlayerId === 'player1' ? 'player2' : 'player1';
+                    
+                    // 予約していたonDisconnect処理は、どんな場合でもキャンセルする
+                    await gameRef.child('players/' + localPlayerId).onDisconnect().cancel();
+    
+                    // 相手がすでに退出済み(leftGame: true)かチェック
+                    if (gameState.players[opponentId] && gameState.players[opponentId].leftGame) {
+                        // 【パターンA】相手はもういない -> 自分が最後のひとり
+                        console.log("相手は退出済み。部屋を削除して終了します。");
+                        await gameRef.remove(); // 部屋ごと削除
+                    } else {
+                        // 【パターンB】相手はまだいる -> 自分の退出情報だけを更新
+                        console.log("相手がまだいるため、自分の退出情報を記録します。");
+                        const playerRef = gameRef.child('players/' + localPlayerId);
+                        await playerRef.update({ isConnected: false, leftGame: true });
+                    }
+                }
+            } catch (error) {
+                console.error("退出処理中にエラーが発生しました:", error);
+            }
         }
         
+        // 【フェーズ2】クライアント側の後始末（これは常に実行する）
+        // リアルタイム監視を停止する
         if (gameRef && gameStateListener) {
             gameRef.off('value', gameStateListener);
         }
-        // ローカルの状態をリセット
+        // このセッションで使っていた変数をすべて初期化する
         currentRoomId = null;
         localPlayerId = null;
         gameRef = null;
         gameStateListener = null;
-        selectedCards = []; 
+        selectedCards = [];
         
+        // モード選択画面に戻る
         showScreen('mode-selection');
     }
 
@@ -660,22 +761,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 対人戦用：画面描画エンジン ---
     function renderMultiplayerGame(gameState) {
-        // ★★★ 戦略的デバッグログ① ★★★
-        console.log("renderMultiplayerGameが呼び出されました。受け取ったgameStateはこちら↓");
-        console.log(gameState);
-
         // --- 1. 必要な変数をすべて定義する ---
         const myPlayerId = localPlayerId;
         if (!myPlayerId) {
-            console.error("デバッグ: myPlayerId が見つかりません！");
             return;
         }
-    
         const { players, turn, phase, message, deck, bidTarget, bids, hands, usedCards, acquiredCards, roomId } = gameState;
-
-        // ★★★ 戦略的デバッグログ② ★★★
-        console.log("デバッグ: playersオブジェクトの中身:", players);
-
         if (!players || !hands || !usedCards || !acquiredCards || !bids) { 
             console.log("players：",players)
             console.log("hands：",hands)
@@ -691,8 +782,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // ★ me と opponent を先に定義します
         const me = players[myPlayerId];
         const opponent = players[opponentId];
-        // ★★★ 戦略的デバッグログ③ ★★★
-        console.log("デバッグ: me:", me, " | opponent:", opponent);
         
         // ★ me と opponent が存在するかチェックします
         if (!me || !opponent) {    
@@ -754,6 +843,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         messageElement.textContent = message;
     
+        // ★★★ ボタンの表示制御をここに集約 ★★★
+        const isGameFinished = gameState.phase === 'finished';
+        // 対人戦用のボタン
+        rematchButton.style.display = isGameFinished ? 'block' : 'none';
+        leaveRoomButton.style.display = isGameFinished ? 'block' : 'none';
+        // 汎用ボタン
+        confirmButton.style.display = isGameFinished ? 'none' : 'block';
+        // ★★★ ソロプレイ用のボタンは常に非表示にする ★★★
+        if (document.getElementById('restart-button')) { // 要素が存在するか一応チェック
+            document.getElementById('restart-button').style.display = 'none';
+        }
+        // ★★★ ここからが追加・修正 ★★★
+        // ゲームが進行中に戻ったら、ボタンの状態をリセットする
+        if (!isGameFinished) {
+            rematchButton.disabled = false;
+            rematchButton.textContent = '再戦する';
+        } else { // ゲーム終了時のおまけメッセージ表示
+            const me = gameState.players[localPlayerId];
+            const opponentId = localPlayerId === 'player1' ? 'player2' : 'player1';
+            const opponent = gameState.players[opponentId];
+            
+            // 自分がまだ押していない場合のみ、相手の状況に応じてテキストを変える
+            if (!me.wantsRematch) {
+                rematchButton.disabled = false; // 押せる状態に戻す
+                if (opponent.wantsRematch) {
+                    rematchButton.textContent = "相手が再戦を望んでいます！";
+                } else {
+                    rematchButton.textContent = '再戦する';
+                }
+            } else { // 自分がすでに押している場合
+                rematchButton.disabled = true;
+                rematchButton.textContent = "再戦待機中...";
+            }
+        }
+
         // --- 4. 最後にターン制御などを行う ---
         const isMyTurn = turn === myPlayerId && phase === 'bidding';
         playerHandElement.classList.toggle('locked', !isMyTurn);
@@ -1470,6 +1594,23 @@ document.addEventListener('DOMContentLoaded', () => {
     backToModeSelectionButton.addEventListener('click', () => {
         showScreen('mode-selection');
     });
+
+    // 「やめる」ボタンの処理 (シンプル)
+    leaveRoomButton.addEventListener('click', () => {
+        leaveRoom(); // 既存の退出関数を呼ぶだけ
+    });
+
+    // 「再戦する」ボタンの処理 (メインロジック)
+    rematchButton.addEventListener('click', async () => {
+        if (!gameRef || !localPlayerId) return;
+
+        // 1. まず、自分が再戦を望んでいることをDBに記録する
+        rematchButton.disabled = true; // 連打防止
+        rematchButton.textContent = '再戦待機中...';
+        const playerRef = gameRef.child('players/' + localPlayerId);
+        await playerRef.update({ wantsRematch: true });
+    });
+
 
     // --- ゲーム開始のトリガー ---
     showScreen('mode-selection');
