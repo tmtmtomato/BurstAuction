@@ -495,9 +495,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const initialGameState = {
             roomId: roomId,
             players: {
-                // ★★★ uidを追加 ★★★
-                player1: { name: 'プレイヤー1', score: 0, isConnected: true, uid: auth.currentUser.uid },
-                player2: { name: 'プレイヤー2', score: 0, isConnected: false, uid: null } // p2は最初は空
+                player1: { name: 'プレイヤー1', score: 0, isConnected: true }, // ← uidのプロパティごと削除
+                player2: { name: 'プレイヤー2', score: 0, isConnected: false } // ← uidのプロパティごと削除
             },
             turn: 'player1',
             phase: 'waiting',
@@ -1604,8 +1603,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
                 const updates = {
                     // ★★★ isConnectedと同時にuidも設定する ★★★
-                    '/players/player2/isConnected': true,
-                    '/players/player2/uid': auth.currentUser.uid,
+                   // '/players/player2/isConnected': true,
+                   // '/players/player2/uid': auth.currentUser.uid,
                     'phase': 'bidding',
                     'bidTarget': firstBidTarget,
                     'deck': initialDeck,
